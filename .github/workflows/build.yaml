@@ -1,0 +1,71 @@
+name: build
+on:
+  workflow_dispatch:
+    inputs:
+      do_release:
+        type: boolean
+        description: do release 
+        required: true
+  pull_request:
+    branches:
+    - master
+    - release-*
+    paths-ignore:
+    - 'docs/**'
+    - '**.md'
+    - '.github/VERSION'
+  push:
+    branches:
+    - master
+    - release-*
+    paths-ignore:
+    - 'docs/**'
+    - '**.md'
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: ''
+  GOSEC_VERSION: '2.18.2'
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+      - uses: docker/setup-buildx-action@v3
+      - name: build
+        env:
+            RELEASE_ME: "${{ github.event.inputs.do_release == 'true' }}"
+        run: |
+          set -x
+          image=theseedoaa/hotrod-with-proxy:latest
+          docker buildx build \
+            --network=host \
+            --platform linux/amd64 \
+            -t $image \
+            -o type=docker \
+            -f ./Dockerfile .
+          docker images
+          docker save $image > hotrod-with-proxy.tar
+      - name: Upload hotrod images to artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: hotrod-with-proxy
+          path: hotrod-with-proxy.tar
+      - name: release
+        if: ${{ inputs.do_release }}
+        env:
+          RELEASE_ME: "${{ github.event.inputs.do_release == 'true' }}"
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          DOCKER_CLI_EXPERIMENTAL: enabled
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          image=theseedoaa/hotrod-with-proxy:latest
+          docker push $image 
